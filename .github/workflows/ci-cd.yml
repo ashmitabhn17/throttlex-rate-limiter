@@ -1,0 +1,130 @@
+name: ThrottleX CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # =========================================================================
+  # 1. Automated Testing & Quality Gate (Blocks code push/merge if tests fail)
+  # =========================================================================
+  test:
+    name: Run Test Suite (Jest + Supertest)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: throttlex
+          POSTGRES_PASSWORD: throttlex
+          POSTGRES_DB: throttlex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U throttlex -d throttlex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: "postgresql://throttlex:throttlex@localhost:5432/throttlex?schema=public"
+      REDIS_URL: "redis://localhost:6379"
+      NODE_ENV: "test"
+      JWT_SECRET: "ci-testing-jwt-secret-key-32chars"
+      RATE_LIMIT_FAIL_OPEN: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate
+
+      - name: Push Prisma Schema to PostgreSQL
+        run: npx prisma db push --schema=backend/prisma/schema.prisma
+
+      - name: Seed Database
+        run: npm run seed
+
+      - name: Run Integration & Concurrency Tests (At least 4 tests required, 8 executed)
+        run: npm run test --workspace backend
+
+  # =========================================================================
+  # 2. Docker Containerization & AWS ECR Push (Triggered on main branch push)
+  # =========================================================================
+  build-and-push:
+    name: Build & Push Docker Image to Amazon ECR
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # If AWS secrets are set up in GitHub Secrets, push to ECR; otherwise verify Docker build
+      - name: Check AWS Secrets configuration
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && [ -n "${{ secrets.ECR_REPOSITORY }}" ]; then
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+            echo "Notice: AWS Secrets not configured yet. Running Docker build verification only."
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Log in to Amazon ECR
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push backend image to Amazon ECR
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f backend/Dockerfile .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Successfully pushed $ECR_REGISTRY/$ECR_REPOSITORY:latest to Amazon ECR"
+
+      - name: Build Docker Image verification (fallback when AWS secrets pending)
+        if: steps.check-secrets.outputs.has_secrets == 'false'
+        run: |
+          docker build -t throttlex-backend:latest -f backend/Dockerfile .
+          echo "Docker image built successfully!"

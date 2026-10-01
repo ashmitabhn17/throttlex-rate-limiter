@@ -1,0 +1,105 @@
+// ThrottleX Prisma schema
+// PostgreSQL stores durable state: admin users, API keys (hashed only),
+// rate-limit rules, and request logs. Redis (not modeled here) stores the
+// volatile token-bucket state.
+// 
+// IMPORTANT: The token bucket logic and state are NOT in PostgreSQL. 
+// They live in Redis and are updated via an atomic Lua script to prevent
+// race conditions under high concurrency.
+// 
+// IDENTIFICATION: To identify API keys securely, the raw key is hashed via SHA-256
+// before being stored here in `keyHash`. The raw key is never stored.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum RateLimitAlgorithm {
+  TOKEN_BUCKET
+  FIXED_WINDOW
+}
+
+enum RequestStatus {
+  ALLOWED
+  BLOCKED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ApiKey {
+  id         String       @id @default(cuid())
+  name       String
+  // Only the hash of the raw key is ever stored. The raw key is shown once.
+  keyHash    String       @unique
+  keyPrefix  String
+  plan       Plan         @default(FREE)
+  status     ApiKeyStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  lastUsedAt DateTime?
+
+  requestLogs RequestLog[]
+
+  @@index([status])
+}
+
+model RateLimitRule {
+  id                  String             @id @default(cuid())
+  route               String
+  method              String
+  algorithm           RateLimitAlgorithm @default(TOKEN_BUCKET)
+  plan                Plan               @default(FREE)
+  capacity            Int
+  refillRatePerSecond Float
+  windowSeconds       Int                @default(60)
+  enabled             Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // One rule per (plan, method, route) combination.
+  @@unique([plan, method, route])
+  @@index([enabled])
+}
+
+model RequestLog {
+  id         String        @id @default(cuid())
+  apiKeyId   String?
+  apiKey     ApiKey?       @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  route      String
+  method     String
+  status     RequestStatus
+  ip         String?
+  userAgent  String?
+  limit      Int
+  remaining  Int
+  retryAfter Int?
+  createdAt  DateTime      @default(now())
+
+  @@index([status])
+  @@index([apiKeyId])
+  @@index([route])
+  @@index([createdAt])
+}

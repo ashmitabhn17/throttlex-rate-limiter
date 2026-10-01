@@ -1,0 +1,29 @@
+{
+  "name": "throttlex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ThrottleX — full-stack API protection platform with Redis + Lua Token Bucket rate limiting",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "backend:dev": "npm run dev --workspace backend",
+    "frontend:dev": "npm run dev --workspace frontend",
+    "backend:build": "npm run build --workspace backend",
+    "frontend:build": "npm run build --workspace frontend",
+    "prisma:migrate": "npm run prisma:migrate --workspace backend",
+    "prisma:generate": "npm run prisma:generate --workspace backend",
+    "seed": "npm run seed --workspace backend",
+    "test": "npm run test --workspace backend",
+    "dev": "concurrently -n backend,frontend -c blue,magenta \"npm run backend:dev\" \"npm run frontend:dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

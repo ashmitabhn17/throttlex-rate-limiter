@@ -1,0 +1,16 @@
+#!/bin/sh
+# Git pre-push hook: Runs test suite before allowing `git push`
+# If tests fail, the push is aborted.
+
+echo "🔍 Running ThrottleX test suite before pushing..."
+npm run test --workspace backend
+
+STATUS=$?
+if [ $STATUS -ne 0 ]; then
+  echo "❌ Tests failed! Git push has been aborted to prevent breaking changes."
+  echo "Please fix the failing tests before pushing."
+  exit 1
+fi
+
+echo "✅ All tests passed! Proceeding with push."
+exit 0
