@@ -15,6 +15,7 @@ RUN npm install
 
 # Copy frontend source files
 COPY frontend/ ./frontend/
+RUN mkdir -p /app/frontend/public
 
 # Build Next.js
 WORKDIR /app/frontend
