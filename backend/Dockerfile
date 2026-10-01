@@ -5,6 +5,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install openssl for Prisma engine compatibility (Alpine ships OpenSSL 3.x)
+RUN apk add --no-cache openssl
+
 # Copy root workspace and backend package files
 COPY package.json package-lock.json* ./
 COPY backend/package.json ./backend/
@@ -18,7 +21,7 @@ COPY backend/tsconfig.json ./backend/
 COPY backend/prisma ./backend/prisma
 COPY backend/src ./backend/src
 
-# Generate Prisma client for backend
+# Generate Prisma client for backend (uses linux-musl-openssl-3.0.x target)
 WORKDIR /app/backend
 RUN npx prisma generate
 
@@ -33,8 +36,8 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Install curl for container health check
-RUN apk add --no-cache curl
+# Install curl (healthcheck) and openssl (Prisma engine needs it at runtime)
+RUN apk add --no-cache curl openssl
 
 # Copy root package files and install only production dependencies
 COPY package.json package-lock.json* ./
