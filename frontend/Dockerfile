@@ -15,7 +15,6 @@ RUN npm install
 
 # Copy frontend source files
 COPY frontend/ ./frontend/
-RUN mkdir -p /app/frontend/public
 
 # Build Next.js
 WORKDIR /app/frontend
@@ -39,7 +38,6 @@ RUN npm install --omit=dev --workspace=frontend
 
 # Copy Next.js build artifacts and config
 COPY --from=builder /app/frontend/.next ./frontend/.next
-COPY --from=builder /app/frontend/public ./frontend/public
 COPY --from=builder /app/frontend/package.json ./frontend/package.json
 COPY --from=builder /app/frontend/next.config.js ./frontend/next.config.js
 
